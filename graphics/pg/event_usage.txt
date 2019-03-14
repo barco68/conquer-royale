@@ -1,0 +1,5 @@
+if keyboard:
+ -> pygame.key.get_pressed()
+
+else:
+ -> pygame.event.get()
