@@ -1,5 +1,5 @@
 import ConfigParser
-from ast import literal_eval
+# from ast import literal_eval
 import os
 import sys
 
@@ -41,7 +41,7 @@ class Engine(object):
         self.all_sprites = pygame.sprite.Group()
         self.players = pygame.sprite.Group()
         self.load_tileset()
-        self._local_player = sprites.LocalPlayer(self, *literal_eval(self._data_stream.pop(0)))
+        self._local_player = sprites.LocalPlayer(self, *self._data_stream.pop(0))
         # self._players.add(self._local_player)
         self.clock = pygame.time.Clock()
         pygame.key.set_repeat(500, 100)
@@ -61,16 +61,31 @@ class Engine(object):
         for event in pygame.event.get():
             if event.type == QUIT:
                 self._running = False
-                self._out_stream.append((-1, None, 'exit', 0))
+                self._out_stream.append((-1, 'exit', None, 0))
 
     def update(self):
-        while len(self._data_stream) > len(self.players) - 1:
-            sprites.Player(self, *literal_eval(self._data_stream.pop()))
+        if len(self._data_stream) > len(self.players) + 1:
+            players = self.players.sprites()
+            players.append(self._local_player)
+            backup = self._data_stream[:]
+            print backup
+            for player_data in backup:
+                check = filter(lambda x: x.identifier == player_data[0], players)
+                if not check:
+                    sprites.Player(self, *player_data)
+                    self._data_stream.remove(player_data)
+                else:
+                    print check
+        print 'update'
         self.players.update(self._data_stream)
         self.all_sprites.update()
         self.camera.update(self._local_player)
-        self._out_stream.append((self._local_player.identifier, (self._local_player.pos.x, self._local_player.pos.y),
-                                self._local_player.team, self._local_player.angle))
+        try:
+            self._out_stream[0] = (self._local_player.identifier, self._local_player.team,
+                                (self._local_player.pos.x, self._local_player.pos.y), self._local_player.angle)
+        except IndexError:
+            self._out_stream.append((self._local_player.identifier, self._local_player.team,
+                                (self._local_player.pos.x, self._local_player.pos.y), self._local_player.angle))
 
     def run(self):
         self._running = True

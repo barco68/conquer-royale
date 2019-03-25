@@ -23,40 +23,55 @@ class Tile(pygame.sprite.Sprite):
 
 class Player(pygame.sprite.Sprite):
     """docstring for Player."""
-    def __init__(self, game, x, y, team, identifier):
+
+    def __init__(self, game, identifier, team, pos, angle=0):
         self._game = game
         self.team = self.origin = team
         self.identifier = identifier
         groups = self._game.all_sprites, self._game.players
-        super(Player, self).__init__(groups)
-        self._image = self._game.tile_set[18 + (team.lower() == 'blue')]
+        pygame.sprite.Sprite.__init__(self, groups)
+        self._image = self._game.tile_set[18 + (team.lower() == 'b')]
         self._image.set_colorkey(COLOR_KEY)
-        self.image = self._image
-        self.rect = self.image.get_rect()
-        self.hit_rect = pygame.Rect(self.rect.left, self.rect.top, self.rect.width, self.rect.height)
-        self.angle = 0
-        self.pos = Vec(x, y)
-
-        def apply_net(self, data):
-            for player in data:
-                if player[0] == self.identifier:
-                    self.pos = Vec(player[1])
-                    self.team = player[2]
-                    self.angle = player[3]
-
-    def update(self, *args):
-        self.apply_net(args[0])
-        yield
+        self.angle = angle
+        self.pos = Vec(pos)
         self.image = pygame.transform.rotate(self._image, self.angle)
+        self.rect = self._image.get_rect()
+        self.rect.center = pos
+        self.hit_rect = pygame.Rect(self.rect.left, self.rect.top, self.rect.width, self.rect.height)
+
+    # noinspection PyAttributeOutsideInit
+    def update(self, *args):
+        try:
+            ret = self.upgen.next()
+        except (AttributeError, StopIteration):
+            if args:
+                self.upgen = self.update_internal(args[0])  # TODO: make a transform from generator to function
+            ret = self.upgen.next()
+        print ret
+
+    def update_internal(self, data):
+        relevant_data = filter(lambda x: x[0] == self.identifier, data)
+        if relevant_data:
+            i, t, p, a = relevant_data[-1]
+            self.team = t
+            self.pos = Vec(p)
+            self.angle = a
+            [data.remove(value) for value in relevant_data]
+        yield 'called'
+        self.image = pygame.transform.rotate(self._image, self.angle)
+        self.rect = self.image.get_rect()
         self.hit_rect.centerx = self.pos.x
         self.hit_rect.centery = self.pos.y
         self.rect.center = self.hit_rect.center
+        yield ' done'
+
 
 
 class LocalPlayer(Player):
     """docstring for LocalPlayer."""
-    def __init__(self, game, pos, team, identifier):
-        super(LocalPlayer, self).__init__(game, pos[0], pos[1], team, identifier)
+
+    def __init__(self, game, identifier, team, pos):
+        Player.__init__(self, game, identifier, team, pos)
         self.remove(self._game.players)
         self.vel = Vec(0, 0)
 
