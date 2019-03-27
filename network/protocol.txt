@@ -1,0 +1,12 @@
+structure:
+    id, team, position, angle
+    id -> integer
+    team -> string ('r'/'b')
+    position -> x, y -> 2-tuple(integer, integer)
+    angle -> float
+
+ACK:
+    None
+
+from string to other values:
+    ast.literal_eval()

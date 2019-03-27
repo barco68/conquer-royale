@@ -14,14 +14,15 @@ class AsyncServer(asyncore.dispatcher):
         self._max_players = max_players
         self._data_organizer = []
         self._curr_players = []
-        self._last = ['red', 'blue']
+        self._last = ['r', 'b']
         self.bind(('0.0.0.0', 50527))
         self.set_reuse_addr()
-        self.address = self.socket.getsockname()
-        print socket.gethostbyname(socket.gethostname())
+        self.address = socket.gethostbyname(socket.gethostname()), self.socket.getsockname()[1]
         self.listen(max_players)
 
     def pick_team(self):
+        # current more or less fair selection of teams
+        # future: players decide their team
         team = self._last.pop(0)
         self._last.append(team)
         return team
@@ -30,17 +31,13 @@ class AsyncServer(asyncore.dispatcher):
         if len(self._curr_players) < self._max_players:
             ret = self.accept()
             if ret is not None:
-                print 'got connection'
                 ret[0].setblocking(1)
                 name = ret[0].recv(CHUNK)
-                text = ((randint(0, 1500),  randint(0, 1500)), self.pick_team(), len(self._curr_players)+1)
+                text = (len(self._curr_players)+1, self.pick_team(), (randint(0, 1500),  randint(0, 1500)))
                 ret[0].send(str(text))
-                self._curr_players.append(AsyncHandler(ret[0], name, self._data_organizer, len(self._curr_players)))
-                for p in self._curr_players:
-                    p.inc_check()
-            else:
-                print 'something went wrong'
+                self._curr_players.append(AsyncHandler(ret[0], name, self._data_organizer))
         if len(self._curr_players) == self._max_players:
+            # currently one game per running
             self.handle_close()
 
     def handle_close(self):
@@ -48,36 +45,36 @@ class AsyncServer(asyncore.dispatcher):
 
 
 class AsyncHandler(asyncore.dispatcher):
-    def __init__(self, sock, name, organizer, check):
+    def __init__(self, sock, name, organizer):
         asyncore.dispatcher.__init__(self, sock=sock)
-        # sock.setblocking(1)
         self._data_organizer = organizer
         self._name = name
-        self._check = check
 
     def handle_write(self):
-        data = str(self._data_organizer)
         if not self._data_organizer:
-            print 'no data received'
             return
+        data = str(self._data_organizer)
         sent = self.send(data)
         data = data[sent:]
         while data:
             sent = self.send(data)
             data = data[sent:]
-        self._data_organizer.append(True)
-        self._check -= reduce(lambda x, y: x + int(not y == -1),
-                              [v.find('disconnected') for v in self._data_organizer if isinstance(v, str)],
-                              0)
-        if self._data_organizer.count(True) >= self._check:
-            for _ in self._data_organizer[:]:
-                self._data_organizer.pop()
 
     def handle_read(self):
-        data = self.recv(CHUNK)
-        if data.find('exit') > -1:
+        strdata = self.recv(CHUNK)
+        if not strdata:
+            return
+        try:
+            data = ast.literal_eval(strdata)
+        except Exception as e:
+            print strdata
+            raise
+        if strdata.find('exit') > -1:
             self.handle_expt()
         else:
+            if len(self._data_organizer) > data[0]-1:
+                self._data_organizer.sort(key=lambda x: x[0])
+                del self._data_organizer[data[0]-1]
             self._data_organizer.append(data)
 
     def handle_expt(self):
@@ -87,9 +84,6 @@ class AsyncHandler(asyncore.dispatcher):
     def handle_close(self):
         self.close()
 
-    def inc_check(self):
-        self._check += 1
-
 
 class AsyncClient(asyncore.dispatcher):
     def __init__(self, name, host, port, dstream, ostream):
@@ -98,23 +92,42 @@ class AsyncClient(asyncore.dispatcher):
         self._name = name
         asyncore.dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+        # currently immidiate connection in start of game
         self.connect((host, port))
 
     def handle_write(self):
         if self._data_stream:
-            flag = self._data_stream[0][2].lower() == 'exit'
             data = self._data_stream.pop(0)
+            flag = data[1].lower() == 'exit'
             data = '{}'.format(data)
+
             self.send(data)
             if flag:
                 self.close()
 
     def handle_read(self):
         data = self.recv(CHUNK)
-        parts = ast.literal_eval(data)
-        for part in parts:
-            self._output.append(part)
-        print data
+        if not data:
+            return
+        data = data.split(']')
+        data = filter(lambda x: isinstance(x, str) and x.startswith('[') and x.endswith(']'), data)
+        for data_part in data:
+            if not data_part:
+                continue
+            data_part += ']'
+            try:
+                parts = ast.literal_eval(data_part)
+                for part in parts:
+                    if isinstance(part, str):
+                        part = ast.literal_eval(part)
+                    if self._output:
+                        self._output.sort(key=lambda x: x[0])
+                        del self._output[part[0]-1]
+                    self._output.append(part)
+            except Exception as e:
+                print data_part
+                print data
+                raise
 
     def handle_close(self):
         self.close()
@@ -123,5 +136,6 @@ class AsyncClient(asyncore.dispatcher):
         print 'connected'
         self.socket.setblocking(1)
         self.send(self._name)
-        initdata = self.recv(CHUNK)
+        initdata = ast.literal_eval(self.recv(CHUNK))
         self._output.append(initdata)
+        self.socket.setblocking(0)

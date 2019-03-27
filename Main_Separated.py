@@ -20,7 +20,6 @@ def get_args():
 
 
 def main():
-    # os.chdir(os.path.dirname(__file__))
     args = get_args()
     if not vars(args):
         game = graphics.pg.gtypes.Engine([((50, 50), 'blue', 1)], [])
