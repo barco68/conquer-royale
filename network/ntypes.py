@@ -21,6 +21,8 @@ class AsyncServer(asyncore.dispatcher):
         self.listen(max_players)
 
     def pick_team(self):
+        # current more or less fair selection of teams
+        # future: players decide their team
         team = self._last.pop(0)
         self._last.append(team)
         return team
@@ -29,17 +31,13 @@ class AsyncServer(asyncore.dispatcher):
         if len(self._curr_players) < self._max_players:
             ret = self.accept()
             if ret is not None:
-                print 'got connection'
                 ret[0].setblocking(1)
                 name = ret[0].recv(CHUNK)
                 text = (len(self._curr_players)+1, self.pick_team(), (randint(0, 1500),  randint(0, 1500)))
                 ret[0].send(str(text))
                 self._curr_players.append(AsyncHandler(ret[0], name, self._data_organizer))
-                # for p in self._curr_players:
-                    # p.inc_check()
-            else:
-                print 'something went wrong'
         if len(self._curr_players) == self._max_players:
+            # currently one game per running
             self.handle_close()
 
     def handle_close(self):
@@ -47,16 +45,13 @@ class AsyncServer(asyncore.dispatcher):
 
 
 class AsyncHandler(asyncore.dispatcher):
-    def __init__(self, sock, name, organizer): # , check):
+    def __init__(self, sock, name, organizer):
         asyncore.dispatcher.__init__(self, sock=sock)
-        # sock.setblocking(1)
         self._data_organizer = organizer
         self._name = name
-        # self._check = check
 
     def handle_write(self):
         if not self._data_organizer:
-            # print 'no data received'
             return
         data = str(self._data_organizer)
         sent = self.send(data)
@@ -64,13 +59,6 @@ class AsyncHandler(asyncore.dispatcher):
         while data:
             sent = self.send(data)
             data = data[sent:]
-        # self._data_organizer.append(True)
-        # self._check -= reduce(lambda x, y: x + int(not y == -1),
-                              # [v.find('disconnected') for v in self._data_organizer if isinstance(v, str)],
-                              # 0)
-        # if self._data_organizer.count(True) >= self._check:
-            # for _ in self._data_organizer[:]:
-                # self._data_organizer.pop()
 
     def handle_read(self):
         strdata = self.recv(CHUNK)
@@ -96,9 +84,6 @@ class AsyncHandler(asyncore.dispatcher):
     def handle_close(self):
         self.close()
 
-    # def inc_check(self):
-        # self._check += 1
-
 
 class AsyncClient(asyncore.dispatcher):
     def __init__(self, name, host, port, dstream, ostream):
@@ -107,6 +92,7 @@ class AsyncClient(asyncore.dispatcher):
         self._name = name
         asyncore.dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+        # currently immidiate connection in start of game
         self.connect((host, port))
 
     def handle_write(self):
@@ -114,7 +100,7 @@ class AsyncClient(asyncore.dispatcher):
             data = self._data_stream.pop(0)
             flag = data[1].lower() == 'exit'
             data = '{}'.format(data)
-            
+
             self.send(data)
             if flag:
                 self.close()
