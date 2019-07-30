@@ -1,5 +1,6 @@
 import os
 import sys
+from math import pi
 
 import sprites
 import maps
@@ -13,10 +14,10 @@ with open(os.devnull, 'w') as f:
     # imports with unwanted prints here
     import pygame
     from pygame.locals import *
+    from pygame.math import Vector2 as Vec
 
     # enable printing
     sys.stdout = old_stdout
-
 
 # make sure the working directory is the game directory
 if not os.getcwd() == sys.path[0]:
@@ -38,34 +39,51 @@ class Engine(object):
         self._out_stream = out_stream
         self._running = False
         self.tile_set = None
-        # Map Construction
-        self._map = maps.MapCache(DEFAULT_MAP)
+        # pre run Graphics Initialization
+        self.camera = None
+        self._background = None
+        self._screen = None
+        self.all_sprites = None
+        self.players = None
+        self.bullets = None
+        self.mobs = None
+        self._local_player = None
+        self.clock = None
+        self.dt = 0
+
+    def new(self):
+        """
+        initialize the graphics
+        """
         # Graphics Initialization
         pygame.init()
-        self._background = pygame.Surface((self._map.width, self._map.height))
-        self.camera = maps.Camera(self._map.width, self._map.height)
         self._screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        self.load_tileset()
+        map_cache = maps.MapCache(DEFAULT_MAP)
+        self._background = pygame.Surface((map_cache.width, map_cache.height))
+        for x, row in enumerate(map_cache.data):
+            for y, tile in enumerate(row):
+                self._background.blit(self.tile_set[int(tile)], (y * TILE_SIZE, x * TILE_SIZE))
+        self.camera = maps.Camera(map_cache.width, map_cache.height)
         self.all_sprites = pygame.sprite.Group()
         self.players = pygame.sprite.Group()
-        self.load_tileset()
-        self._local_player = sprites.LocalPlayer(self, *self._data_stream.pop(0))
+        self.bullets = pygame.sprite.Group()
+        self.mobs = pygame.sprite.Group()
+        sprites.Mob(self, 1, 1500, 1250)
         self.clock = pygame.time.Clock()
-        self.dt = 0
 
     def render(self):
         """
         rendering the game
         """
         # map rendering, might need an efficiency upgrade
-        for x, row in enumerate(self._map.data):
-            for y, tile in enumerate(row):
-                self._background.blit(self.tile_set[int(tile)], (y * TILE_SIZE, x * TILE_SIZE))
         self._screen.blit(self._background, self.camera.apply_surf(self._background))
-        # object rendering, try self.all_sprites.draw(self._screen)
-        for sprite in self.all_sprites:
+        # object rendering
+        for sprite in self.all_sprites.sprites():
             self._screen.blit(sprite.image, self.camera.apply(sprite))
         # player rendering, possible double rendering
         self._screen.blit(self._local_player.image, self.camera.apply(self._local_player))
+        self.draw_player_ammo(10, 10)
         pygame.display.update()
 
     def events(self):
@@ -76,45 +94,97 @@ class Engine(object):
         for event in pygame.event.get():
             if event.type == QUIT:
                 self._running = False
-                # send exit message to (demy) net thread
-                self._out_stream.append((-1, 'exit', None, 0))
-        self._local_player.apply_keys()
+                # send exit message to net thread
+                self._out_stream.append((-1, 'e', 0, 0, 0))
+        self._local_player.apply_input()
 
     def update(self):
         """
         updating the parts of the game with the events input
         """
-        # if new players entered the game, insert them to the game
-        # future: players could only enter before battle started
-        if len(self._data_stream) > len(self.players) + 1:
-            players = self.players.sprites()
-            players.append(self._local_player)
-            backup = self._data_stream[:]
-            for player_data in backup:
-                check = filter(lambda x: x.identifier == player_data[0], players)
-                if not check:
-                    sprites.Player(self, *player_data)
-                    self._data_stream.remove(player_data)
-        # update players
-        self.players.update(self._data_stream)
-        # update all objects
-        self.all_sprites.update()
-        # update point of view
-        self.camera.update(self._local_player)
-        # send local player data to (demy) net thread
-        # possible change: first send local player data, then update
+        # send local player and fired bullets data to net thread
         try:
+            self._out_stream[1:] = []
             self._out_stream[0] = (self._local_player.identifier, self._local_player.team,
-                                (self._local_player.pos.x, self._local_player.pos.y), self._local_player.angle)
+                                   self._local_player.pos.x, self._local_player.pos.y, self._local_player.angle)
         except IndexError:
             self._out_stream.append((self._local_player.identifier, self._local_player.team,
-                                (self._local_player.pos.x, self._local_player.pos.y), self._local_player.angle))
+                                     self._local_player.pos.x, self._local_player.pos.y, self._local_player.angle))
+        for bullet in self.bullets.sprites():
+            if bullet.origin == self._local_player.identifier and not bullet.sent:
+                self._out_stream.append((0, chr(bullet.origin), bullet.pos.x, bullet.pos.y, -bullet.vel.as_polar()[1]))
+                bullet.sent = True
+        # update players
+        self.players.update(self._data_stream)
+        # if new players entered the game, insert them to the game
+        # future: players could only enter before battle started
+        players = self.players.sprites()
+        players.append(self._local_player)
+        players.sort(key=lambda x: x.identifier)
+        for data in self._data_stream[:]:
+            if not data[0]:
+                if not ord(data[1]) == self._local_player.identifier:
+                    sprites.Bullet(self, ord(data[1]), data[2], data[3], data[4])
+                self._data_stream.remove(data)
+            else:
+                check = filter(lambda x: x.identifier == data[0], players)
+                if not check:
+                    sprites.Player(self, *data)
+        # update all objects
+        self.all_sprites.update()
+
+        # update point of view
+        self.camera.update(self._local_player)
+
+        # bullets hitting anything
+        hits = pygame.sprite.groupcollide(self.bullets, self.all_sprites, False, False, sprites.collide_hit_rect)
+        for hit, targets in hits.items():
+            if hit in targets:
+                # prevent self hitting
+                targets.remove(hit)
+            for target in targets:
+                # cross fire -> switch velocities
+                if isinstance(target, sprites.Bullet):
+                    hit.vel, target.vel = target.vel, hit.vel
+                # hitting a mob -> reduce health
+                elif isinstance(target, sprites.Mob):
+                    target.health -= HEALTH_FACTOR
+                    # health <= 0 -> kill mob
+                    if target.health <= 0:
+                        target.kill()
+                        # bullet origin == local player -> refill ammo
+                        if hit.origin == self._local_player.identifier:
+                            self._local_player.ammo += target.reward
+                # hitting player
+                elif isinstance(target, sprites.Player):
+                    # other team -> change team
+                    if not players[hit.origin - 1].team == target.team:
+                        target.team = players[hit.origin - 1].team
+                    # same team -> refill ammo unless bullet origin == local player
+                    else:
+                        if target is self._local_player and not hit.origin == self._local_player.identifier:
+                            self._local_player.ammo = 100
+
+        # mobs hitting local player
+        hits = pygame.sprite.spritecollide(self._local_player, self.mobs, False, collided=sprites.collide_hit_rect)
+        # calculate knock back direction
+        knock_back = Vec(0, 0)
+        for hit in hits:
+            knock_back += hit.vel.normalize()
+            self._local_player.ammo -= REFILL_FACTOR
+        # check for knock back, squared faster because no sqrt call
+        if knock_back.length_squared():
+            knock_back.scale_to_length(KNOCKBACK_SPEED)
+        # apply knock back
+        self._local_player.pos += knock_back
 
     def run(self):
         """
         running the game
         """
         self._running = True
+        initdata = max(self._data_stream, key=lambda x: x[0])
+        self._local_player = sprites.LocalPlayer(self, *initdata)
         while self._running:
             # time since last frame, used mainly in player speed calculation
             # possible change: player decide the fps
@@ -141,6 +211,23 @@ class Engine(object):
                 rect = (tile_x * TILE_SIZE, tile_y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
                 self.tile_set[len(self.tile_set)] = source.subsurface(rect)
 
+    def draw_player_ammo(self, x, y):
+        """
+        HUD for the player to see his state
+
+        :param x: left position for the HUD
+        :type x: int
+        :param y: top position for the HUD
+        :type y: int
+        """
+        info_rect = pygame.Rect(x, y, 50, 50)
+        if self._local_player.team == 'r':
+            color = RED
+        elif self._local_player.team == 'b':
+            color = BLUE
+        end = pi * (0.5 + self._local_player.ammo * 2 / 100.0)
+        pygame.draw.arc(self._screen, color, info_rect, 0.5 * pi, end, 25)
+
 
 def graphic_thread(instream, outstream):
     """
@@ -152,74 +239,5 @@ def graphic_thread(instream, outstream):
     :type outstream: list
     """
     game = Engine(instream, outstream)
+    game.new()
     game.run()
-
-
-def toggle_fullscreen(surface, width, height, flags=0):
-    """
-    toggles fullscreen without scaling
-
-    :param surface: the surface you want to become all over the screen
-    :param width: the number of pixels in the horizontal axis of the screen
-    :type width: int
-    :param height: the number of pixels in the vertical axis of the screen
-    :type height: int
-    :param flags: flags that should be add to the surface during the conversion
-    :return: the surface which displayed on the screen
-    """
-
-    # gets the flags of 'surface' and add to the given flags
-    flags |= surface.get_flags()
-
-    # surface needs conversion before "set_mode"
-    surface = surface.convert()
-
-    # make the new fullscreen or windowed surface
-    if not flags & FULLSCREEN:
-        flags |= FULLSCREEN
-        screen = pygame.display.set_mode((width, height), flags)
-    else:
-        flags ^= FULLSCREEN
-        screen = pygame.display.set_mode((width, height), flags)
-
-    # transferring the graphics from surface to screen
-    screen.blit(surface, (0, 0))
-    pygame.display.update()
-
-    # returns the new screen
-    return screen
-
-
-def toggle_scaled_fullscreen(surface, width, height, flags=0):
-    """
-    toggles fullscreen with scaling
-
-    :param surface: the surface you want to become all over the screen
-    :param width: the number of pixels in the horizontal axis of the screen
-    :type width: int
-    :param height: the number of pixels in the vertical axis of the screen
-    :type height: int
-    :param flags: flags that should be add to the surface during the conversion
-    :return: the surface which displayed on the screen
-    """
-
-    # gets the flags of 'surface' and add to the given flags
-    flags |= surface.get_flags()
-
-    # surface needs conversion before "set_mode"
-    surface = surface.convert()
-
-    # make the new fullscreen or windowed surface
-    if not flags & FULLSCREEN:
-        flags |= FULLSCREEN
-        screen = pygame.display.set_mode((width, height), flags)
-    else:
-        flags ^= FULLSCREEN
-        screen = pygame.display.set_mode((width, height), flags)
-
-    # scaling and transferring the graphics from surface to screen
-    screen.blit(pygame.transform.scale(surface, screen.get_size()), (0, 0))
-    pygame.display.update()
-
-    # returns the new screen
-    return screen

@@ -1,15 +1,33 @@
-# define sizes
+# all related
 WIDTH = 1200
 HEIGHT = 800
 TILE_SIZE = 50
 
-#engine related
+# engine related
 TILE_SET_FILE = 'tileset.png'
 DEFAULT_MAP = 'default.map'
-FPS = 60
+FPS = 30
 
-#sprite related
+
+# sprite related
+RED = 255, 0, 0
+BLUE = 0, 162, 232
 COLOR_KEY = 163, 73, 164
 
-#player related
-BASE_SPEED = 500
+# player related
+PLAYER_SPEED = 500
+SHOOT_WAIT = 0.21
+PLAYER_RADIUS = 15
+PLAYER_CANON = 6
+
+# bullet related
+BULLET_SPEED = 800
+BULLET_TTL = 1
+BULLET_RADIUS = 7
+
+# mob related
+MOB_COLOR = 127, 81, 116
+MOB_SPEED = 350
+HEALTH_FACTOR = 35
+REFILL_FACTOR = 10
+KNOCKBACK_SPEED = 20

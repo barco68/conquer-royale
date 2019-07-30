@@ -1,44 +1,37 @@
+import argparse
 from threading import Thread
-# from network.Network import net_thread will be needed later
+from network.Network import player_net_thread
 from graphics.pg.gtypes import graphic_thread
 
 
-def demy_net_thread(gton, ntog):
+def get_args():
     """
-    a function to simulate network responses
+    simple function for organized argument parsing
 
-    :param gton: "client"'s input stream
-    :type gton: list
-    :param ntog: "client"'s output stream
-    :type ntog: list
+    :return: the arguments given to the program, by name and value in a namespace
+    :rtype: argparse.Namespace
     """
-    flag = True
-    while flag:
-        echo = gton[:]
-        for data in echo:
-            if data[0] == 1:
-                ntog[0] = data
-                try:
-                    ntog[1] = (2, chr(ord('b') + ord('r') - ord(data[1])), (1550 - data[2][0], 1550
-                                                                            - data[2][1]), data[3])
-                except IndexError:
-                    ntog.append((2, chr(ord('b') + ord('r') - ord(data[1])), (1550 - data[2][0], 1550
-                                                                              - data[2][1]), data[3]))
-            flag = not data[1] == 'exit'
-    print ntog[-1]
+    parser = argparse.ArgumentParser()
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-l', action='store_true', help='a flag to tell the program the server is on the same device')
+    group.add_argument('-addr', help='the IP(v4) address of the server')
+    return parser.parse_args()
 
 
 def main():
     """
     main function for activation of threads
     """
-    gton, ntog = [], [(1, 'b', (1000, 1000)), (1, 'b', (1000, 1000), 0)]
+    args = get_args()
+    if args.l:
+        args.addr = '127.0.0.1'
+    gton, ntog = [], []
+    nthread = Thread(target=player_net_thread, args=(gton, ntog, args.addr))
     gthread = Thread(target=graphic_thread, args=(ntog, gton))
-    nthread = Thread(target=demy_net_thread, args=(gton, ntog))
-    gthread.start()
     nthread.start()
-    gthread.join()
+    gthread.start()
     nthread.join()
+    gthread.join()
     # currently Main_Separated.py for activating server
     # possible change: main.py for both playing and server
 
